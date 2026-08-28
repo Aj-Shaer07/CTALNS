@@ -1,162 +1,223 @@
-
 from __future__ import annotations
 
-import csv
-import re
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
-
-from .model import Instance, Vehicle
-
-
-def _tokens(line: str) -> List[str]:
-    return [x for x in re.split(r"[\t, ]+", line.strip()) if x]
+import json
+import re
+from typing import Dict, List, Tuple
 
 
-def load_small_or_case_instance(
-    folder: str | Path,
-    *,
-    depot_start: int = 0,
-    depot_return: int | None = None,
-    interval_minutes: float = 60.0,
-) -> Instance:
-    folder = Path(folder)
+class SourceDataError(ValueError):
+    """Raised when the source data are insufficient for the published MILP."""
 
-    demand = _read_I(folder / "I.txt")
-    vehicles = _read_K(folder / "K.txt")
-    crew_composition = _read_C(folder / "C.txt")
-    distance = _read_distances(folder / "Distances.txt")
-    service_time, service_intervals = _read_service(folder / "t.txt")
-    speed, speed_intervals = _read_speed(folder / "v.txt")
 
-    if service_intervals != speed_intervals:
-        raise ValueError(
-            f"Service and speed files use different intervals: "
-            f"{service_intervals} vs {speed_intervals}"
-        )
+@dataclass(frozen=True)
+class Vehicle:
+    k: int
+    capacity: float
+    max_crew: float
 
-    intervals = sorted(service_intervals)
-    lower = {l: (l - 1) * interval_minutes / 60.0 for l in intervals}
-    upper = {l: l * interval_minutes / 60.0 for l in intervals}
 
-    # The repository's small-instance I.txt explicitly contains node 0 as
-    # the start depot and node 11 as the dummy return depot.
-    if depot_return is None:
-        depot_return = max(demand)
+@dataclass
+class Instance:
+    customers: List[int]
+    nodes: List[int]
+    depot_start: int
+    depot_end: int
+    vehicles: Dict[int, Vehicle]
+    crew: Dict[int, Dict[int, float]]
+    worker_availability: Dict[int, float]
+    demand: Dict[int, float]
+    distance: Dict[Tuple[int, int], float]
+    speed: Dict[Tuple[int, int, int], float]
+    service: Dict[Tuple[int, int, int], float]
+    lower: Dict[int, float]
+    upper: Dict[int, float]
+    intervals: List[int]
+    metadata: Dict[str, object] = field(default_factory=dict)
 
-    customers = sorted(i for i in demand if i not in {depot_start, depot_return})
+
+def _read_tsv(path: Path):
+    with path.open("r", encoding="utf-8-sig") as f:
+        return [line.strip().split() for line in f if line.strip()]
+
+
+def _load_worker_availability(root: Path) -> Dict[int, float]:
+    """
+    Read V^c only when an explicitly named worker-availability file exists.
+
+    The authors' public Small Intance directory does NOT contain V.txt;
+    its files are C.txt, Distances.txt, I.txt, K.txt, coord.csv, t.txt and v.txt.
+    Therefore an arbitrary V.txt in a user's Objective-1 directory must not be
+    interpreted as worker availability.
+
+    Accepted filenames:
+      worker_availability.json
+      worker_availability.txt
+      V_worker.txt
+
+    TXT format:
+      1 2
+      2 2
+      3 0
+
+    JSON format:
+      {"1": 2, "2": 2, "3": 0}
+    """
+    for path in (root / "worker_availability.json",):
+        if path.exists():
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                values = {int(k): float(v) for k, v in raw.items()}
+            except (ValueError, TypeError) as exc:
+                raise SourceDataError(
+                    f"Invalid worker_availability JSON in {path}: {exc}"
+                ) from exc
+            return values
+
+    for path in (root / "worker_availability.txt", root / "V_worker.txt"):
+        if path.exists():
+            rows = _read_tsv(path)
+            values = {}
+            for row_no, r in enumerate(rows, start=1):
+                if len(r) < 2:
+                    raise SourceDataError(
+                        f"Invalid worker availability row {row_no} in {path}: {r}"
+                    )
+                try:
+                    values[int(r[0])] = float(r[1])
+                except ValueError as exc:
+                    raise SourceDataError(
+                        f"Invalid worker availability row {row_no} in {path}: {r}. "
+                        "Expected: worker_type availability"
+                    ) from exc
+            return values
+
+    return {}
+
+
+def load_small_instance(root: str | Path) -> Instance:
+    """
+    Load the published small-instance data.
+
+    The paper's Table 3 defines eight crew combinations. The public
+    repository C.txt currently contains only five rows and therefore is
+    recorded as a repository discrepancy; the MILP uses the paper's
+    eight-combination table as the mathematical source.
+
+    V^c is NOT fabricated. If the dataset/configuration does not contain it,
+    build_paper_milp() will stop with a source-data diagnostic because
+    constraint (13) cannot be instantiated exactly.
+    """
+    root = Path(root)
+
+    I = _read_tsv(root / "I.txt")
+    K_rows = _read_tsv(root / "K.txt")
+
+    demand = {int(r[0]): float(r[1]) for r in I[1:]}
     nodes = sorted(demand)
+    customers = [i for i in nodes if i not in (0, 11)]
+    vehicles = {
+        int(r[0]): Vehicle(int(r[0]), float(r[1]), float(r[2]))
+        for r in K_rows[1:]
+    }
 
-    # V^c is not contained in C.txt. It is therefore kept as a loader input
-    # rather than invented from the data file.
-    worker_limits = {}
+    # The repository stores crew rows in worker-type order:
+    #   type 1 = DP, type 2 = Dr, type 3 = MFDP.
+    # This is confirmed by the authors' calculos_BWO.py, which transposes
+    # the C/D matrix before using it. The paper's Table 3 labels the first
+    # two columns as Dr and DP, so the internal representation follows the
+    # repository order to remain compatible with the authors' code.
+    crew = {}
+    c_path = root / "C.txt"
+    repository_crew_rows = []
+    if c_path.exists():
+        rows = _read_tsv(c_path)
+        repository_crew_rows = rows[1:]
+
+    # The public C.txt is truncated to five rows. The paper's Table 3/D.txt
+    # defines all eight combinations. The first five repository rows are
+    # retained as evidence, and the complete eight-row paper table is used
+    # in repository worker-type order (DP, Dr, MFDP).
+    crew = {
+        1: {1: 1, 2: 1, 3: 0},
+        2: {1: 2, 2: 1, 3: 0},
+        3: {1: 3, 2: 1, 3: 0},
+        4: {1: 4, 2: 1, 3: 0},
+        5: {1: 0, 2: 0, 3: 1},
+        6: {1: 1, 2: 0, 3: 1},
+        7: {1: 2, 2: 0, 3: 1},
+        8: {1: 3, 2: 0, 3: 1},
+    }
+
+    worker_availability = _load_worker_availability(root)
+
+    distance = {}
+    distance_path = root / "Distances.txt"
+    if not distance_path.exists():
+        raise SourceDataError(f"Missing required source file: {distance_path}")
+    for line in distance_path.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"\((\d+),(\d+)\):\s*([-+0-9.eE]+)", line.strip().rstrip(","))
+        if m:
+            i, j, val = int(m.group(1)), int(m.group(2)), float(m.group(3))
+            distance[(i, j)] = val
+
+    v_rows = _read_tsv(root / "v.txt")
+    intervals = list(range(1, len(v_rows[0]) - 1))
+    speed = {}
+    for r in v_rows[1:]:
+        i, j = int(r[0]), int(r[1])
+        for idx, l in enumerate(intervals):
+            speed[(i, j, l)] = float(r[2 + idx])
+
+    # The public small-instance speed file represents the physical depot as
+    # node 0 and the dummy return depot as node 11.  It provides 0->i speeds
+    # and i->j customer speeds, but deliberately does not repeat the return
+    # arcs i->11.  Distances.txt confirms that the dummy return depot is at
+    # the same physical location as the start depot: distance(i,11) equals
+    # distance(0,i).  Therefore the non-fabricated source mapping for the
+    # return leg is v[i,11,l] := v[0,i,l].  This is a representation adapter,
+    # not a guessed speed value.
+    for i in [n for n in nodes if n not in (0, 11)]:
+        for l in intervals:
+            if (i, 11, l) not in speed:
+                key = (0, i, l)
+                if key in speed and speed[key] > 0:
+                    speed[(i, 11, l)] = speed[key]
+
+    t_rows = _read_tsv(root / "t.txt")
+    service = {}
+    for r in t_rows[1:]:
+        i, d = int(r[0]), int(r[1])
+        for idx, l in enumerate(intervals):
+            service[(i, d, l)] = float(r[2 + idx])
+
+    # The small-instance source uses ten 60-minute intervals.
+    lower = {l: 60.0 * (l - 1) for l in intervals}
+    upper = {l: 60.0 * l for l in intervals}
 
     return Instance(
         customers=customers,
         nodes=nodes,
+        depot_start=0,
+        depot_end=11,
         vehicles=vehicles,
-        crew_composition=crew_composition,
-        worker_limits=worker_limits,
+        crew=crew,
+        worker_availability=worker_availability,
         demand=demand,
         distance=distance,
         speed=speed,
-        service_time=service_time,
+        service=service,
         lower=lower,
         upper=upper,
-        depot_start=depot_start,
-        depot_return=depot_return,
+        intervals=intervals,
+        metadata={
+            "source": "Ilabaca et al. (2025), Table 3 + public repository data",
+            "paper_crew_combinations": 8,
+            "repository_C_rows": len(repository_crew_rows),
+            "crew_data_discrepancy": len(repository_crew_rows) != 8,
+            "repository_worker_type_order": "DP, Dr, MFDP",
+            "worker_availability_present": bool(worker_availability),
+            "return_arc_speed_adapter": "v[i,11,l] mapped from v[0,i,l] using same physical depot representation",
+        },
     )
-
-
-def _read_I(path: Path) -> Dict[int, float]:
-    out: Dict[int, float] = {}
-    with path.open(encoding="utf-8") as f:
-        next(f, None)
-        for line in f:
-            t = _tokens(line)
-            if len(t) >= 2:
-                out[int(t[0])] = float(t[1])
-    return out
-
-
-def _read_K(path: Path) -> Dict[int, Vehicle]:
-    out: Dict[int, Vehicle] = {}
-    with path.open(encoding="utf-8") as f:
-        next(f, None)
-        for line in f:
-            t = _tokens(line)
-            if len(t) >= 3:
-                k = int(t[0])
-                out[k] = Vehicle(k, float(t[1]), int(float(t[2])))
-    return out
-
-
-def _read_C(path: Path) -> Dict[int, Dict[int, int]]:
-    out: Dict[int, Dict[int, int]] = {}
-    with path.open(encoding="utf-8") as f:
-        rows = []
-        for line in f:
-            t = _tokens(line)
-            if t:
-                rows.append([int(float(x)) for x in t])
-
-    if not rows:
-        return out
-
-    # Header contains worker-type IDs; following rows are:
-    # crew_id, worker_type_1_count, ..., worker_type_C_count
-    worker_types = rows[0]
-    for row in rows[1:]:
-        d = row[0]
-        out[d] = {
-            c: row[c_index + 1]
-            for c_index, c in enumerate(worker_types)
-            if c_index + 1 < len(row)
-        }
-    return out
-
-
-_PAIR_RE = re.compile(r"\((\d+)\s*,\s*(\d+)\)\s*:\s*([-+0-9.eE]+)")
-
-
-def _read_distances(path: Path) -> Dict[tuple[int, int], float]:
-    out = {}
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            m = _PAIR_RE.search(line)
-            if m:
-                i, j, value = m.groups()
-                out[(int(i), int(j))] = float(value.rstrip(","))
-    return out
-
-
-def _read_service(path: Path):
-    out = {}
-    intervals = []
-    with path.open(encoding="utf-8") as f:
-        header = _tokens(next(f))
-        intervals = [int(x) for x in header[2:]]
-        for line in f:
-            t = _tokens(line)
-            if len(t) < 2 + len(intervals):
-                continue
-            i, d = int(t[0]), int(t[1])
-            for idx, l in enumerate(intervals):
-                out[(i, d, l)] = float(t[2 + idx])
-    return out, intervals
-
-
-def _read_speed(path: Path):
-    out = {}
-    intervals = []
-    with path.open(encoding="utf-8") as f:
-        header = _tokens(next(f))
-        intervals = [int(x) for x in header[2:]]
-        for line in f:
-            t = _tokens(line)
-            if len(t) < 2 + len(intervals):
-                continue
-            i, j = int(t[0]), int(t[1])
-            for idx, l in enumerate(intervals):
-                out[(i, j, l)] = float(t[2 + idx])
-    return out, intervals
