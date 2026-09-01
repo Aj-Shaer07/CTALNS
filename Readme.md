@@ -91,3 +91,44 @@ TD-VRPFCA Formulation
                       ├── Computational Time
                       ├── Convergence
                       └── Scalability
+
+## How to Run
+
+### Setup Virtual Environment
+Make sure to activate your virtual environment before running the scripts:
+```bash
+source venv/bin/activate
+```
+
+### 1. Run MILP (Exact Method)
+
+Before running MILP make sure to have set up Gurobi by following the instrcutions in gurobi.md
+
+**Small Instance (Reference Baseline)**:
+```bash
+python run_milp.py --instance small --dataset "./dataset/Small Intance" --mode reconstructed
+```
+
+**Large Instance**:
+```bash
+python run_milp.py --instance large --dataset "./dataset/Large Intance" --large-instance C101
+```
+
+### 2. Run BWO (Metaheuristic Baseline)
+
+**Small Instance**:
+```bash
+python experiments/run_bwo_small.py --dataset "./dataset/Small Intance" --runs 10 --seed 42
+```
+*(Results are saved to `results/bwo/small/`)*
+
+**Large Instances** (e.g. C101, C201, R101, R201, RC101, RC201):
+```bash
+python experiments/run_bwo_large.py --dataset "./dataset/Large Intance" --instance C101 --runs 1 --seed 42
+```
+*(Results are saved to `results/bwo/large/`)*
+
+### 3. Run Automated Tests
+```bash
+python -m pytest tests/ -v
+```
