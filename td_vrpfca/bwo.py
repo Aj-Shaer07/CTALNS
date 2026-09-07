@@ -13,10 +13,10 @@ class BWOOptimizer:
     def __init__(
         self,
         instance: Instance,
-        npop: int = 50,
-        procreation_rate: float = 0.60,
+        npop: int = 20,
+        procreation_rate: float = 0.40,
         cannibalism_rate: float = 0.50,
-        mutation_rate: float = 0.10,
+        mutation_rate: float = 0.05,
         seed: int = None
     ):
         self.inst = instance

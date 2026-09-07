@@ -14,15 +14,21 @@ def main():
     parser.add_argument("--instance", type=str, required=True, help="Instance name e.g. C101")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--runs", type=int, default=1, help="Number of runs")
+
+    parser.add_argument("--np", type=float, default=0.40, help="Procreation rate")
+    parser.add_argument("--cr", type=float, default=0.50, help="Cannibalism rate")
+    parser.add_argument("--nm", type=float, default=0.05, help="Mutation rate")
+    parser.add_argument("--npop", type=int, default=20, help="Population size")
+    parser.add_argument("--imax", type=int, default=100, help="Max iterations")
     args = parser.parse_args()
 
     inst = load_large_instance(args.dataset, args.instance)
     
-    np_val = 0.60
-    cr_val = 0.50
-    nm_val = 0.10
-    npop = 20
-    i_max = 100 # This is max_iter
+    np_val = args.np
+    cr_val = args.cr
+    nm_val = args.nm
+    npop = args.npop
+    i_max = args.imax # This is max_iter
     
     runs_results = []
     
