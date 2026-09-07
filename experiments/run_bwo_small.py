@@ -18,6 +18,10 @@ def main():
 
     inst = load_small_instance(args.dataset)
     
+    # Inject the same reconstructed worker availability used by MILP for a fair comparison
+    if not inst.worker_availability:
+        inst.worker_availability = {1: 4.0, 2: 2.0, 3: 2.0}
+    
     npop = 50
     i_max = 10 # This is max_iter
     
