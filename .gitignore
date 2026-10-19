@@ -1,6 +1,27 @@
-venv/
-
+# Python bytecode & cache
 __pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# macOS system metadata
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Logs & temp files
+*.log
+*.tmp
+
+# Data, archives & results
 dataset/
 results/
+*.zip
 *.json
