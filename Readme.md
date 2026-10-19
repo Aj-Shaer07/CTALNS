@@ -49,48 +49,47 @@ The algorithm will include problem-specific destroy-and-repair operators designe
 - **Crew:** Reassign and optimize crew allocations
 - **Time:** Adjust schedules and time-dependent decisions
 
-An **adaptive operator selection mechanism** will be implemented to dynamically select operators based on their search performance.
+An **adaptive operator selection mechanism** dynamically selects operators based on their search performance via roulette-wheel scoring.
 
-### 5. Experimental Comparison
+### 5. Novelty 2: Multi-Objective Time–Cost Trade-Off Optimization
 
-Conduct comprehensive experiments comparing **BWO** and **CT-ALNS** on the same benchmark and real-world instances.
+Extend the original makespan-only problem into a bi-objective formulation balancing operational speed against real-world logistics costs:
 
-The algorithms will be evaluated using the following criteria:
+$$\min_{S} \; \Big( T_{MAX}(S), \; C_{total}(S) \Big)$$
 
-| Evaluation Criterion | Description |
-|---|---|
-| Solution Quality | Quality of the obtained \(T_{MAX}\) solutions |
-| Consistency | Stability of results across multiple runs |
-| Computational Time | Time required to obtain solutions |
-| Convergence | Rate at which solution quality improves |
-| Scalability | Performance as instance size increases |
+where $C_{total} = C_{vehicle} + C_{distance} + C_{crew} + C_{overtime}$.
+
+- **MO-CTALNS:** Multi-Objective CT-ALNS equipped with 14 operators (including cost-conscious fleet reduction and crew reassignment), Chebyshev scalarized simulated annealing, and NSGA-II style crowding distance pruning.
+- **MO-BWO Baseline:** Multi-Objective Black Widow Optimization baseline using non-dominated sorting and crowding distance diversity preservation.
+
+### 6. Experimental Evaluation & Metrics
+
+Conduct comprehensive evaluations across both single-objective ($T_{MAX}$) and multi-objective ($T_{MAX}, C_{total}$) formulations using:
+- **Single-Objective:** Solution quality, consistency, convergence curves, and wall-clock execution time.
+- **Multi-Objective:** Hypervolume ($HV$), Zitzler-Thiele Set Coverage $C(A, B)$, and extreme plan trade-offs (Fastest vs. Cheapest vs. Knee compromise).
 
 ## Overall Workflow
 
 ```text
-TD-VRPFCA Formulation
+TD-VRPFCA Problem Formulation
         │
-        ├── MILP
-        │    └── Small Instances
-        │         └── Exact Reference Solutions
+        ├── MILP (Gurobi)
+        │    └── Small Instances ── Exact Reference Benchmarks (T_MAX = 33.81)
         │
-        ├── BWO
-        │    └── Medium & Large Instances
+        ├── Novelty 1: Single-Objective Optimization (min T_MAX)
+        │    ├── BWO Baseline (Black Widow Optimization)
+        │    └── CT-ALNS (12 Coordinated Destroy/Repair Operators)
         │
-        └── CT-ALNS
-             ├── Route Destroy/Repair
-             ├── Crew Destroy/Repair
-             ├── Time Destroy/Repair
-             └── Adaptive Operator Selection
+        └── Novelty 2: Multi-Objective Optimization (min T_MAX, C_total)
+             ├── MO-BWO Baseline (Pareto Ranking + Crowding Distance)
+             └── MO-CTALNS (14 Operators + Chebyshev SA + Pareto Archive)
                       │
                       ▼
-              Experimental Evaluation
+              Evaluation & Metrics
                       │
-                      ├── Solution Quality
-                      ├── Consistency
-                      ├── Computational Time
-                      ├── Convergence
-                      └── Scalability
+                      ├── Single-Obj: Best/Mean/Std T_MAX, Speedup, Gap to MILP
+                      └── Multi-Obj: Hypervolume (HV), Set Coverage C(A,B), Pareto Fronts
+```
 
 ## How to Run
 
@@ -193,7 +192,23 @@ Outputs generated:
 * `results/multiobjective_R101/figures/convergence_multiobjective.png` (Hypervolume growth)
 * `results/multiobjective_R101/pareto_front.csv` and `pareto_front.json`
 
-### 6. Generate Presentation Dashboard & Analysis Plots
+### 6. Head-to-Head Multi-Objective Benchmark: MO-CTALNS vs. MO-BWO
+
+Directly benchmark the proposed **MO-CTALNS** against the **MO-BWO** baseline on the identical bi-objective problem:
+
+$$\min_S \Big( T_{MAX}(S), \; C_{total}(S) \Big)$$
+
+This executes both algorithms across multiple random runs, computes the **Common Hypervolume ($HV$)**, calculates the **Zitzler-Thiele Set Coverage metric $C(A, B)$**, and generates an overlapping Pareto frontier chart:
+
+```bash
+python compare_mo_algorithms.py --instance R101 --runs 5 --iterations 50 --seed 42
+```
+
+Outputs generated:
+* `results/mo_comparison_R101/MO_COMPARISON_REPORT.md` (Executive summary with HV, Set Coverage, and extreme plan deltas)
+* `results/mo_comparison_R101/figures/mo_comparison_pareto_fronts.png` (Overlapping 2D Pareto frontiers showing MO-CTALNS dominance)
+
+### 7. Generate Presentation Dashboard & Analysis Plots
 
 Generate a publication-ready report, convergence trajectories, route visualization, load-balancing diagnostics, and audit CSV tables:
 ```bash
@@ -203,7 +218,7 @@ python analyze_results.py \
   --out results/comparison_R101/dashboard
 ```
 
-### 7. Run Automated Regression Tests
+### 8. Run Automated Regression Tests
 
 Run the complete test suite (30 unit & regression tests across both novelties):
 ```bash

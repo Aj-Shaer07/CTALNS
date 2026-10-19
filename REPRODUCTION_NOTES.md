@@ -80,3 +80,19 @@ To compare BWO and CT-ALNS fairly, use the same:
 - hardware, and multiple seeds.
 
 Report best, mean, standard deviation, runtime, convergence and feasibility.
+
+## Multi-Objective Time–Cost Reproduction Protocol (Novelty 2)
+
+To ensure reproducible multi-objective evaluation across MO-CTALNS and MO-BWO, use the standardized cost configuration:
+- **Vehicle Capitalization Cost ($F_k$):** $\$100.00$ per dispatched vehicle. Empty routes incur zero cost.
+- **Distance Mileage Cost ($c_k$):** $\$1.20$ per Euclidean distance unit.
+- **Crew Base Hourly Wages:**
+  - Delivery Person (DP): $\$15.00/\text{hr}$ ($\$0.25/\text{min}$)
+  - Driver (Dr): $\$20.00/\text{hr}$ ($\$0.3333/\text{min}$)
+  - Multi-Functional Delivery Person (MFDP): $\$25.00/\text{hr}$ ($\$0.4167/\text{min}$)
+- **Overtime Penalty Threshold:** $480.0\text{ min}$ (8-hour standard shift). Overtime hours are compensated at $1.5\times$ base rate.
+- **Multi-Objective Metrics Standardization:**
+  - **Hypervolume ($HV$):** Calculated against a common reference point $(1.1 \cdot \max T_{MAX}, \; 1.1 \cdot \max C_{total})$ constructed across both algorithms' combined non-dominated fronts.
+  - **Set Coverage $C(A, B)$:** Exact fraction of points in archive $B$ weakly dominated by archive $A$.
+  - **Pareto Archive Pruning:** Fixed capacity $N=50$ using NSGA-II crowding distance to maintain boundary extremes.
+
