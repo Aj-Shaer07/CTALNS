@@ -25,3 +25,24 @@ dataset/
 results/
 *.zip
 *.json
+
+# LaTeX source & auxiliary files
+*.tex
+main.tex
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.toc
+*.lot
+*.lof
+*.out
+
+# Figures
+figures/
+figure/
+/figures
+/figure
+
